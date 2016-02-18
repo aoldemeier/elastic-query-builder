@@ -1,3 +1,5 @@
+# Main module containing query builder and helper classes
+
 require 'json'
 
 class ElasticQueryBuilder
@@ -12,20 +14,18 @@ class ElasticQueryBuilder
   end
 
   def search()
-    @queryAsHash = @queryAsHash.merge({:_search => {}})
-    @cursor = @queryAsHash[:_search]
-    return self 
+    self 
   end
 
   def withSize(size)
-    @queryAsHash[:_search] = @queryAsHash[:_search].merge({:size => size})
-    return self
+    @queryAsHash = @queryAsHash.merge({:size => size})
+    self
   end
 
   def withFilter()
-    @queryAsHash[:_search] = @queryAsHash[:_search].merge({:query => {:filtered => {:filter => {}}}})
-    @cursor = @queryAsHash[:_search][:query][:filtered]
-    return self
+    walk(@queryAsHash, :query, :filtered)
+    @cursor[:filter] = {}
+    self
   end
 
   def must_gen(modal, expr)
@@ -35,7 +35,7 @@ class ElasticQueryBuilder
                               else
                                 [expr]
                               end 
-    return self
+    self
   end
   
   def must(expr)
@@ -45,10 +45,57 @@ class ElasticQueryBuilder
   def must_not(expr)
     must_gen(:must_not, expr)
   end
-  
-  def withAggs()
-    # ...
+
+  def sortBy(field, sortOrder, type)
+    @queryAsHash = @queryAsHash.merge(
+      {:sort => [{field => {:order => sortOrder, :unmapped_type => type}}]}
+    )
+    @cursor = @queryAsHash[:sort]
+    self
   end
+  
+  def aggregate()
+    walk(@queryAsHash, :aggregations)
+    self
+  end
+
+  def withHistogram(name, field, interval, key, sortOrder, timeZoneOffset)
+    @cursor[:histogram] = {name => {:field => field, :interval => interval, :order => {key => sortOrder}, :time_zone => timeZoneOffset}}
+    self
+  end
+
+  def withAggregateFilter(filterName)
+    walk(@queryAsHash[:aggregations], :histogram, :aggregations, :requests, :filters, :filters, filterName)
+    @cursor[:query] = {}
+    self
+  end
+
+  def wildcard(wc)
+    @cursor[:query] = @cursor[:query].merge({:wildcard => {:path => {:value => wc}}})
+    self
+  end
+
+  def withAgg(name)
+    walk(@queryAsHash[:aggregations], :histogram, :aggregations, :requests, :aggs, name)
+    self
+  end
+
+  def percentile(field, percents)
+    if @cursor[:percentiles] == nil then @cursor[:percentiles] = {} end
+    @cursor[:percentiles] = @cursor[:percentiles].merge({:field => field, :percents => [percents]})
+    self
+  end
+
+  private
+
+  def walk(from, *symchain)
+    @cursor = from
+    symchain.each do |sym|
+      if @cursor[sym] == nil then @cursor[sym] = {} end
+      @cursor = @cursor[sym]
+    end
+  end
+
 end
 
 class ElasticExpr
@@ -58,5 +105,24 @@ class ElasticExpr
 
   def range(label, lowerBound, upperBound)
     return {:range => {label => {:gte => lowerBound, :lte => upperBound}}}
+  end
+
+  def self.now()
+    'now'
+  end
+end
+
+class ElasticType
+  def self.long()
+    'long'
+  end
+end
+
+class ElasticSortOrder
+  def self.ascending()
+    'asc'
+  end
+  def self.descending()
+    'desc'
   end
 end
