@@ -3,19 +3,42 @@
 require 'json'
 
 class ElasticQueryBuilder
- 
-  def initialize()
-    @queryAsHash = {}
-    @cursor = @queryAsHash
+
+  def initialize(builder=nil)
+    if builder == nil then
+      @queryAsHash = {}
+      @cursor = @queryAsHash
+    else
+      @queryAsHash = builder.queryAsHash
+      @cursor = builder.cursor
+    end
   end
+
+  attr_reader :queryAsHash
+  attr_reader :cursor
 
   def getJson()
     @queryAsHash.to_json
   end
 
   def search()
-    self 
+    ElasticQueryBuilderFilter.new(self)
   end
+
+  private
+
+  def walk(from, *symchain)
+    @cursor = from
+    symchain.each do |sym|
+      if @cursor[sym] == nil then @cursor[sym] = {} end
+      @cursor = @cursor[sym]
+    end
+  end
+
+end
+
+# This class is the first stage of a query builder
+class ElasticQueryBuilderFilter < ElasticQueryBuilder
 
   def withSize(size)
     @queryAsHash = @queryAsHash.merge({:size => size})
@@ -31,13 +54,13 @@ class ElasticQueryBuilder
   def must_gen(modal, expr)
     if @cursor[:filter][:bool] == nil then @cursor[:filter][:bool] = {} end
     @cursor[:filter][:bool][modal] = if @cursor[:filter][:bool][modal].kind_of?(Array) then
-                                @cursor[:filter][:bool][modal] << expr 
-                              else
-                                [expr]
-                              end 
+                                       @cursor[:filter][:bool][modal] << expr
+                                     else
+                                       [expr]
+                                     end
     self
   end
-  
+
   def must(expr)
     must_gen(:must, expr)
   end
@@ -48,16 +71,20 @@ class ElasticQueryBuilder
 
   def sortBy(field, sortOrder, type)
     @queryAsHash = @queryAsHash.merge(
-      {:sort => [{field => {:order => sortOrder, :unmapped_type => type}}]}
+        {:sort => [{field => {:order => sortOrder, :unmapped_type => type}}]}
     )
     @cursor = @queryAsHash[:sort]
     self
   end
-  
+
   def aggregate()
     walk(@queryAsHash, :aggregations)
-    self
+    ElasticQueryBuilderAggregate.new(self)
   end
+end
+
+#This class is returned after a query builder has been marked for aggregation
+class ElasticQueryBuilderAggregate < ElasticQueryBuilder
 
   def withHistogram(name, field, interval, key, sortOrder, timeZoneOffset)
     @cursor[:histogram] = {name => {:field => field, :interval => interval, :order => {key => sortOrder}, :time_zone => timeZoneOffset}}
@@ -85,17 +112,6 @@ class ElasticQueryBuilder
     @cursor[:percentiles] = @cursor[:percentiles].merge({:field => field, :percents => [percents]})
     self
   end
-
-  private
-
-  def walk(from, *symchain)
-    @cursor = from
-    symchain.each do |sym|
-      if @cursor[sym] == nil then @cursor[sym] = {} end
-      @cursor = @cursor[sym]
-    end
-  end
-
 end
 
 class ElasticExpr
